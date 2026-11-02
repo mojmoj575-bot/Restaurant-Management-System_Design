@@ -1,0 +1,31 @@
+.idea/
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/*.pkl
+*.log
+# Python cache files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# PyCharm settings
+.idea/
+
+migrate_old_orders.py
+tkinter_ui_before_update.py
+
+# Restaurant data and backups
+data/
+*.pkl
+*.tmp
+
+# Local files
+.env
+*.log

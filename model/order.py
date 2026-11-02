@@ -1,0 +1,323 @@
+from model.customer import Customer
+from model.menu import Menu
+from datetime import datetime
+from persiantools.jdatetime import JalaliDateTime
+import os
+import pickle
+import shutil
+
+class Order:
+    def __init__(self, order_id: int, customer: Customer, menu: Menu) -> None:
+        if type(order_id) is not int or order_id <= 0:
+            raise ValueError("شماره سفارش باید عدد صحیخ مثبت باشد")
+        if not isinstance(customer, Customer):
+            raise TypeError("مشتری باید از کلاس Customer باشد")
+        if not isinstance(menu, Menu):
+            raise TypeError("منو باید از کلاس Menu باشد")
+
+        self.order_id = order_id
+        self.customer = customer
+        self.menu = menu
+        self._items = {}
+        self.created_at = datetime.now()
+
+
+    def add_item(self, name: str, quantity: int) -> None:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("نام غذا معتبر نیست.")
+
+        if type(quantity) is not int or quantity <= 0:
+            raise ValueError("تعداد غذا باید عدد صحیح مثبت باشد.")
+
+        name = name.strip()
+        price = self.menu.get_price(name)
+
+        if name in self._items:
+            self._items[name]["quantity"] += quantity
+        else:
+            self._items[name] = {
+                "quantity": quantity,
+                "price": price
+            }
+
+    def calculate_total(self) -> int:
+        total = 0
+
+        for item in self._items.values():
+            total += item["price"] * item["quantity"]
+
+        return total
+
+    def remove_item(self, name: str) -> None:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("نام غذا معتبر نیست.")
+
+        name = name.strip()
+
+        if name not in self._items:
+            raise ValueError("این غذا در سفارش وجود ندارد.")
+
+        del self._items[name]
+
+    def get_items(self) -> dict:
+        return {
+            name : details.copy() for name, details in
+            self._items.items()
+        }
+
+    def get_order_datetime(self) -> str:
+        jalali_date = JalaliDateTime(self.created_at)
+        return jalali_date.strftime("%Y/%m/%d - %H:%M:%S")
+
+    def generate_invoice(self) -> str:
+        lines = [
+            "========== فاکتور رستوران ==========",
+            f"شماره سفارش: {self.order_id}",
+            f"نام مشتری: {self.customer.first_name} {self.customer.last_name}",
+            f"شماره تماس: {self.customer.phone_number}",
+            f"تاریخ سفارش: {self.get_order_datetime()}",
+            "------------------------------------"
+        ]
+
+        for name, details in self._items.items():
+            quantity = details["quantity"]
+            price = details["price"]
+            subtotal = quantity * price
+
+            lines.append(
+                f"{name} | تعداد: {quantity} | "
+                f"قیمت واحد: {price:,} | "
+                f"جمع: {subtotal:,} تومان"
+            )
+
+        lines.append("------------------------------------")
+        lines.append(
+            f"مبلغ کل: {self.calculate_total():,} تومان"
+        )
+        lines.append("====================================")
+
+        return "\n".join(lines)
+
+    def save_order(self, filename: str = "data/orders.pkl") -> None:
+        folder = os.path.dirname(filename)
+
+        try:
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+
+            orders = {}
+
+            if os.path.isfile(filename):
+                with open(filename, "rb") as file:
+                    orders = pickle.load(file)
+
+                if not isinstance(orders, dict):
+                    raise ValueError("ساختار فایل سفارش‌ها معتبر نیست.")
+            if self.order_id in orders:
+                raise ValueError(
+                    f"سفارش شماره {self.order_id} قبلاً ثبت شده است."
+                )
+
+            orders[self.order_id] = self
+
+            if os.path.isfile(filename):
+                backup_filename = os.path.join(
+                    folder,
+                    "orders_backup.pkl"
+                )
+                shutil.copy2(filename, backup_filename)
+
+            temp_filename = filename + ".tmp"
+
+            try:
+                with open(temp_filename, "wb") as file:
+                    pickle.dump(orders, file)
+                    file.flush()
+                    os.fsync(file.fileno())
+
+                os.replace(temp_filename, filename)
+
+            finally:
+                if os.path.exists(temp_filename):
+                    os.remove(temp_filename)
+
+        except (OSError, pickle.UnpicklingError, EOFError) as error:
+            raise ValueError(f"خطا در ذخیره سفارش: {error}") from error
+
+    @staticmethod
+    def load_order(
+        order_id: int,
+        filename: str = "data/orders.pkl"
+    ) -> "Order":
+
+        if not os.path.isfile(filename):
+            raise FileNotFoundError("فایل سفارش‌ها وجود ندارد.")
+
+        try:
+            with open(filename, "rb") as file:
+                orders = pickle.load(file)
+
+        except (OSError, pickle.UnpicklingError, EOFError) as error:
+            raise ValueError(f"خطا در بازیابی: {error}") from error
+
+        if not isinstance(orders, dict):
+            raise ValueError("ساختار فایل سفارش‌ها معتبر نیست.")
+
+        if order_id not in orders:
+            raise ValueError("شماره سفارش پیدا نشد.")
+
+        order = orders[order_id]
+
+        if not isinstance(order, Order):
+            raise TypeError("اطلاعات سفارش معتبر نیست.")
+
+        return order
+
+    @staticmethod
+    def get_next_order_id(
+        filename: str = "data/orders.pkl"
+    ) -> int:
+
+        if not os.path.isfile(filename):
+            return 1001
+
+        try:
+            with open(filename, "rb") as file:
+                orders = pickle.load(file)
+
+            if not isinstance(orders, dict):
+                raise ValueError("ساختار فایل سفارش‌ها معتبر نیست.")
+
+            if not orders:
+                return 1001
+
+            if any(type(key) is not int for key in orders):
+                raise ValueError("شناسه سفارش‌ها معتبر نیست.")
+
+            return max(1000, max(orders.keys())) + 1
+
+        except (OSError, pickle.UnpicklingError, EOFError) as error:
+            raise ValueError(
+                f"خطا در خواندن شماره سفارش: {error}"
+            ) from error
+
+    @staticmethod
+    def check_backup(
+        filename: str = "data/orders.pkl"
+    ) -> dict:
+        import pickle
+        from pathlib import Path
+
+        main_file = Path(filename)
+        backup_file = main_file.with_name(
+            "orders_backup.pkl"
+        )
+
+        try:
+            with main_file.open("rb") as file:
+                orders = pickle.load(file)
+
+            if not isinstance(orders, dict):
+                raise ValueError("ساختار فایل اصلی نامعتبر است.")
+
+            for order_id, order in orders.items():
+                if not isinstance(order_id, int) or isinstance(order_id, bool):
+                    raise ValueError("شناسه سفارش نامعتبر است.")
+
+                if not isinstance(order, Order):
+                    raise ValueError("اطلاعات سفارش نامعتبر است.")
+
+                if order.order_id != order_id:
+                    raise ValueError("شماره سفارش مطابقت ندارد.")
+
+            return {
+                "status": "main_ok",
+                "orders": orders
+            }
+
+        except (
+            FileNotFoundError,
+            OSError,
+            EOFError,
+            pickle.UnpicklingError,
+            ValueError
+        ) as main_error:
+
+            try:
+                with backup_file.open("rb") as file:
+                    backup_orders = pickle.load(file)
+
+                if not isinstance(backup_orders, dict):
+                    raise ValueError(
+                        "ساختار نسخه پشتیبان نامعتبر است."
+                    )
+
+                for order_id, order in backup_orders.items():
+                    if not isinstance(order_id, int) or isinstance(order_id, bool):
+                        raise ValueError("شناسه سفارش پشتیبان نامعتبر است.")
+
+                    if not isinstance(order, Order):
+                        raise ValueError("اطلاعات سفارش پشتیبان نامعتبر است.")
+
+                    if order.order_id != order_id:
+                        raise ValueError("شماره سفارش پشتیبان مطابقت ندارد.")
+
+                return {
+                    "status": "backup_available",
+                    "orders": backup_orders,
+                    "message": str(main_error)
+                }
+
+            except (
+                OSError,
+                EOFError,
+                pickle.UnpicklingError,
+                ValueError
+            ) as backup_error:
+                return {
+                    "status": "recovery_failed",
+                    "orders": None,
+                    "message": str(backup_error)
+                }
+
+    @staticmethod
+    def restore_backup(
+        filename: str = "data/orders.pkl"
+    ) -> bool:
+        import os
+        import tempfile
+        import pickle
+        from pathlib import Path
+
+        result = Order.check_backup(filename)
+
+        if result["status"] != "backup_available":
+            raise ValueError(
+                "نسخه پشتیبان معتبر برای بازیابی وجود ندارد."
+            )
+
+        main_file = Path(filename)
+        main_file.parent.mkdir(parents=True, exist_ok=True)
+
+        temp_filename = None
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=main_file.parent,
+                prefix="orders_restore_",
+                suffix=".tmp",
+                delete=False
+            ) as temp_file:
+
+                temp_filename = temp_file.name
+                pickle.dump(result["orders"], temp_file)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+
+            os.replace(temp_filename, main_file)
+            return True
+
+        finally:
+            if temp_filename and os.path.exists(temp_filename):
+                os.remove(temp_filename)
